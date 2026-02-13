@@ -1,0 +1,24 @@
+# Vivado build directories
+build/
+sim_build/
+.Xil/
+
+# Vivado Log and Journal files
+*.jou
+*.log
+*.str
+*.pb
+*.wdb
+*.rpt
+*.backup.jou
+*.backup.log
+
+# Generated Bitstream (at root)
+system_wrapper.bit
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Editor directories
+.vscode/
