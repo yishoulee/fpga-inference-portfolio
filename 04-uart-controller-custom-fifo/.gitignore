@@ -1,0 +1,29 @@
+# Vivado specific
+.Xil/
+*.jou
+*.log
+*.pb
+*.wdb
+*.str
+*.dcp
+*.bit
+*.vsl
+*.rpt
+
+# Generated Project Directories
+*.cache/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+xsim.dir/
+
+# Python (for test usage)
+__pycache__/
+*.pyc
+
+# Local Editor
+.vscode/
+
+uart_fifo_prj/
+sim_build/
