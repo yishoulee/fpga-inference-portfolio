@@ -13,8 +13,9 @@ sim:
 	@echo "Running Simulation..."
 	cd sim_build && xsim tb_spi_master_snap -tclbatch ../scripts/sim.tcl
 
+
 wave:
-	cd sim_build && xsim tb_spi_master_snap -gui
+	cd sim_build && xsim tb_spi_master_snap -gui -tclbatch ../scripts/xsim_wave.tcl
 
 build:
 	@mkdir -p build
