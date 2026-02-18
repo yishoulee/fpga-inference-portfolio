@@ -1,0 +1,22 @@
+# Vivado Build Artifacts
+build/
+.Xil/
+xsim.dir/
+
+# Log Files and Journals
+*.jou
+*.log
+*.pb
+*.wdb
+*.str
+
+# Generated Reports and Bitstreams
+*.rpt
+*.bit
+*.dcp
+
+# Vivado Specific
+webtalk*
+.ip_user_files/
+.cache/
+.hw/
