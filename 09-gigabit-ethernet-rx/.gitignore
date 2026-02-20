@@ -1,0 +1,35 @@
+# Vivado Project Files
+.Xil/
+build/
+sim_build/
+xsim.dir/
+
+# Generated Bitstreams and Probes
+*.bit
+*.ltx
+ethernet_rx.bit
+ethernet_rx.ltx
+
+# Simulation and Waveforms
+*.wdb
+*.pb
+*.jou
+*.log
+*.str
+*.vcd
+*.tcl.backup
+
+# Reports and Statistics
+utilization*.rpt
+timing_summary*.rpt
+usage_statistics_webtalk.xml
+*.xml
+*.html
+
+# Data Exports
+ila_data.csv
+
+# Temporary Files
+.DS_Store
+*.swp
+*~
