@@ -1,0 +1,31 @@
+# Vivado Project and temporary files
+pcie_xdma/
+.Xil/
+*.log
+*.jou
+*.pb
+*.wdb
+*.str
+*.os
+
+# Build Artifacts
+system_wrapper.bit
+*.rpt
+*.bin
+*.dcp
+
+# Cloned Driver Repository (Handled by Makefile)
+dma_ip_drivers/
+
+# Compiled Tools
+dma_to_device
+dma_from_device
+reg_rw
+performance
+
+# Python
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
