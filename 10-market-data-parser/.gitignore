@@ -1,0 +1,41 @@
+# Vivado Generated Files
+*.jou
+*.log
+*.pb
+*.wdb
+.Xil/
+*.str
+*.os
+*.xml
+
+# Simulation Artifacts
+scripts/sim_build/
+xsim.dir/
+*.wdb
+*.vcd
+work/
+transcript
+
+# Build Artifacts
+build/
+scripts/build/
+*.bit
+*.ltx
+*.bin
+*.mcs
+*.prm
+*.rpt
+
+# Captured Data
+captured_data.csv
+*.csv
+*.ila
+
+# Python
+__pycache__/
+*.pyc
+
+# Temporary/Backup Files
+*~
+*.bak
+*.swp
