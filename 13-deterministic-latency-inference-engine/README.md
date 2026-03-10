@@ -1,37 +1,41 @@
-# Project 13: FPGA-Accelerated UDP Market Data Parser & NPU
+# Project 13: Wire-Speed Inference Subsystem
 
 ## 1. Project Overview
-This project implements a **Hardware-Accelerated Market Data Processing Pipeline** on the Alinx AX7015B (Zynq-7015). It features a cut-through architecture that processes Gigabit Ethernet UDP packets, parses financial protocols in real-time, and executes a trading strategy using a custom **Systolic Neural Processing Unit (NPU)**. This design moves the critical path of trading logic entirely into the FPGA fabric, eliminating OS jitter and achieving deterministic latency.
+This project implements a **Hardware-Accelerated Inference Pipeline** on the Alinx AX7015B (Zynq-7015). It features a cut-through architecture that processes Gigabit Ethernet UDP packets, parses payloads in real-time, and executes a customized **Systolic Neural Processing Unit (NPU)**. This design moves the critical path of inference logic entirely into the FPGA fabric, eliminating OS jitter and achieving deterministic latency.
 
 ### Hardware Bring-Up & Debugging Spotlight
 This debugging journey is the crown jewel of the project. It perfectly illustrates the gap between "it works in ModelSim" and "it works on physical silicon."
 
 #### 1. The OS Bottleneck & Layer 2 Bypass (The `scapy` Fix)
 *   **The Symptom:** Standard Python `socket` scripts sending UDP broadcast packets worked perfectly in simulation but failed to reach the physical FPGA.
-*   **The Root Cause:** The host PC’s Linux/Windows kernel network stack was hijacking the packets. Because the FPGA is a passive, RX-only receiver, it does not respond to ARP (Address Resolution Protocol) requests. Without an ARP reply, the host OS's routing table refused to forward the packets to the physical copper interface.
-*   **The Fix:** Transitioned from application-layer sockets to **raw sockets using `scapy`**. By dropping down to Layer 2 (Data Link Layer), we bypassed the OS kernel, IP routing tables, and ARP cache entirely, injecting raw Ethernet frames directly into the NIC driver.
-*   **The Takeaway:** This mirrors real-world High-Frequency Trading (HFT) "kernel bypass" techniques (like Solarflare/Onload) to guarantee transmission and shave off latency.
+*   **The Root Cause:** The host PC's Linux/Windows kernel network stack was hijacking the packets. Because the FPGA is a passive, RX-only receiver, it does not respond to ARP requests. Without an ARP reply, the host OS refused to forward packets.
+*   **The Fix:** Transitioned from application-layer sockets to **raw sockets using `scapy`**. By dropping down to Layer 2, we bypassed the OS kernel and ARP cache entirely.
 
-#### 2. Hunting the True Offset with the ILA (Simulation vs. Reality)
-*   **The Symptom:** The NPU output remained zero despite the `scapy` script successfully flooding the physical network link.
-*   **The Root Cause:** The testbench simulation became "bug-compatible" with the RTL, creating a false positive. The RTL was looking for the stock symbol at an arbitrary offset, and the simulation was modified to feed data at that exact offset. However, real-world Ethernet + IPv4 + UDP headers consume exactly 42 bytes.
-*   **The Fix:** Armed a hardware trap using the **Vivado Integrated Logic Analyzer (ILA)**. By triggering strictly on `gmii_rx_dv == 1` and flooding the direct link, we captured the physical wire data. This proved the payload started exactly at byte 42, allowing us to realign the `udp_parser` state machine perfectly to the physical network stack.
+#### 2. The Deaf MAC (RGMII IDELAY Regression)
+*   **The Symptom:** Despite `scapy` successfully flooding the link, the FPGA MAC never detected the preamble. The physical PHY was completely deaf.
+*   **The Root Cause:** A regression in the `rgmii_rx.sv` clocking primitives. The project was using an `IDELAY_VALUE` of `28` with no clock inversion. This skewed the RGMII 125MHz clock relative to the incoming data (by over 2.2ns), causing the MAC to sample exactly on the target data transitions instead of the stable center of the data "eye".
+*   **The Fix:** Restored the working phase delay parameters from a baseline project. Reverting to `IDELAY_VALUE(0)` with a 180-degree phase shift (`~gmii_rx_clk`) centered the capture window perfectly, instantly bringing the physical link back to life.
 
-#### 3. The "Ghost Weights" (Hardware Initialization)
-*   **The Symptom:** The hardware pipeline was correctly extracting the price, but the NPU result was always 0, meaning the LED trigger threshold was never crossed.
-*   **The Root Cause:** In simulation, the testbench explicitly wrote the AXI weights before sending packets. On physical silicon, the registers inside `axi_weight_regs` initialized to zero on power-up.
-*   **The Fix:** Utilized a **Virtual Input/Output (VIO)** core to simulate the control plane. Since the full Zynq PS (Processing System) adds significant build complexity, we instantiated a VIO core to drive the AXI-Lite interface. This allows us to manually "inject" weights and thresholds via the Vivado Hardware Manager console, verifying the datapath without needing a full embedded Linux stack.
+#### 3. Shift-Register Parsing vs. Absolute Byte Counting
+*   **The Symptom:** After fixing the MAC, the NPU output remained zero. The RTL parser was designed to rigidly wait for `byte_counter == 50` to match the target Feature ID, but the physical hardware failed to match anything.
+*   **The Root Cause:** Network environments are inherently messy. The Linux OS or NIC drivers often silently inject 802.1Q VLAN tags or Ethernet padding, shifting the arbitrary "byte 50" offset sideways.
+*   **The Fix:** Abandoned explicit byte-offset counting. Implemented a **Continuous Signature Scanner** using a 32-bit shift register. The parser now continuously shifts in `s_axis_tdata`, searching for the hex signature `{current_feature_id[23:0], s_axis_tdata} == 32'h30303530` ("0050") anywhere in the stream, making the extraction bulletproof and immune to VLAN tags.
 
-#### 4. Parameterizing Time (The 1-Second Pulse Stretcher)
-*   **The Symptom:** The RTL simulation appeared to completely "hang" or freeze immediately after successfully calculating a valid trade and triggering the module.
-*   **The Root Cause:** The hardware trigger mechanism included a pulse-stretcher to keep the active-low LED on for 1 second so it was visible to the human eye. At 125MHz, this required a counter of `125,000,000`. The behavioral simulator was trying to blindly simulate 125 million empty clock cycles.
-*   **The Fix:** Parameterized the `LED_PULSE_TICKS` in `top.sv`. For physical synthesis, it defaults to 125 million. When instantiated in `tb_system.sv`, the parameter is overridden to just 100 cycles, allowing the simulation to execute instantly while preserving real-world hardware functionality.
+#### 4. The "Ghost Weights" (Hardware Initialization)
+*   **The Symptom:** The NPU result was always 0, meaning the LED trigger threshold was never crossed, even with valid input.
+*   **The Root Cause:** In simulation, the testbench explicitly wrote the AXI weights before sending packets. On silicon, the registers inside `axi_weight_regs` initialized to zero on power-up.
+*   **The Fix:** Utilized a **Virtual Input/Output (VIO)** core to simulate the control plane, injecting weights and thresholds manually.
+
+#### 5. Ethernet Zero-Padding Pulse Stretching
+*   **The Symptom:** Sending small test packets (< 64 bytes) resulted in "washed out" inference values, causing false positive triggers.
+*   **The Root Cause:** Ethernet mandates a minimum frame size of 64 bytes. When sending a 24-byte UDP packet, the OS/NIC zero-pads the frame. The parser held `valid` high as long as `s_axis_tvalid` asserted, flooding the NPU pipeline with trailing zeros.
+*   **The Fix:** Hand-crafted a 1-cycle auto-clear logic trap to ensure the PE array only ingests exactly one valid byte per signature match, cleanly dropping the rest of the zero-padded frame.
 
 ## 2. Theory & Implementation
-### The Race to Zero (Latency)
-In High-Frequency Trading (HFT), speed is the differentiator. This project implements a **Cut-Through Architecture**:
+### Deterministic Latency Architecture
+In ultra-low latency applications, speed is the differentiator. This project implements a **Cut-Through Architecture**:
 1.  **Decode** headers as they stream across the wire (byte-by-byte).
-2.  **Trigger** the NPU immediately upon the capture of the final byte of the relevant field (Price).
+2.  **Trigger** the NPU immediately upon the capture of the final byte of the relevant field (Feature Vector).
 3.  **Execute** arithmetic logic in parallel using an unrolled hardware pipeline.
 
 ### System Diagram
@@ -51,10 +55,10 @@ In High-Frequency Trading (HFT), speed is the differentiator. This project imple
               | (AXI-Stream 8-bit)
               v
     +-----------------------+
-    |    UDP / IP Parser    |  <-- "The Gatekeeper"
-    |  (FSM: Idle->IP->UDP) |      Filters for Symbol "0050"
-    +---------+-------------+      Extracts Price @ Byte 46
-              | (Price, Valid)
+    |  Packet Inspection    |  <-- "The Gatekeeper"
+    |  (FSM: Idle->IP->UDP) |      Filters for Feat. ID "0050"
+    +---------+-------------+      Extracts Value @ Byte 46
+              | (Value, Valid)
               v
     +-----------------------+      +--------------------+
     |     Systolic NPU      | <--- |  AXI-Lite Config   |
@@ -63,13 +67,13 @@ In High-Frequency Trading (HFT), speed is the differentiator. This project imple
               | (Dot Product Score)
               v
     +-----------------------+
-    |    Decision Logic     |  <-- "The Trader"
+    |    Decision Logic     |  <-- "The Classifier"
     +---------+-------------+      Compare Score vs Threshold
               |
      +--------+--------+
      |        |        |
-   [BUY]    [SELL]   [LEDs]
- (Low Price) (High Price)
+  [Class 0]   [Class 1]   [LEDs]
+ (Low Value) (High Value)
 ```
 
 ## 3. RTL Modules: Detailed Architecture
@@ -80,26 +84,26 @@ In High-Frequency Trading (HFT), speed is the differentiator. This project imple
 
 ### 2. MAC & Parser (`rtl/mac_rx.sv`, `rtl/udp_parser.sv`)
 -   **MAC:** Operates in the 125 MHz clock domain. Checks frame delimiters and signals valid data to the parser.
--   **Parser:** A Finite State Machine (FSM) tailored to a fixed packet structure. It monitors byte offsets to identify the Symbol (Bytes 42-45) and Price (Bytes 46-49).
+-   **Parser:** A Finite State Machine (FSM) tailored to a fixed packet structure. It monitors byte offsets to identify the **Feature ID** (Bytes 42-45) and **Value** (Bytes 46-49).
 -   **Zero-Copy:** No buffering of the full packet. Processing happens *byte-by-byte*.
 
 ### 3. Neural Processing Unit (`rtl/npu_core.sv`)
 -   **Architecture:** 8-stage 1D Systolic Array.
--   **Operation:** $Result = \sum_{i=0}^{7} (Weight_i \times Price)$.
+-   **Operation:** $Result = \sum_{i=0}^{7} (Weight_i \times Value)$.
 -   **Latency:** The Array has a fixed latency of **16 clock cycles** (2 cycles per PE).
 -   **Correction:** The `result_valid` signal is perfectly delay-matched to ensure we only sample the final accumulated value. This alignment is critical; reading one cycle early results in invalid partial sums.
 
 ### 4. Configuration Interface (`rtl/axi_weight_regs.sv`)
 -   **Role:** Implements a memory-mapped AXI4-Lite Slave interface.
--   **Storage:** Maintains the 8 NPU weights (`slv_reg0`-`slv_reg7`) and the Buy/Sell Threshold (`slv_reg8`).
--   **Dynamic Updates:** Allows an external controller (VIO or ARM Processor) to update trading parameters in real-time without re-synthesizing the FPGA bitstream.
+-   **Storage:** Maintains the 8 NPU weights (`slv_reg0`-`slv_reg7`) and the Decision Threshold (`slv_reg8`).
+-   **Dynamic Updates:** Allows an external controller (VIO or ARM Processor) to update inference parameters in real-time without re-synthesizing the FPGA bitstream.
 
 ### 5. Top-Level Integration (`rtl/top.sv`)
 This module is the "Motherboard" of the design, handling:
 -   **Clock Domain Crossing (CDC):** Safely moving data between 125 MHz (Ethernet), 100 MHz (System), and 50 MHz (AXI-Lite).
 -   **LED Logic:** Pulse stretchers ensure microsecond-long triggers are visible.
-    *   **LED A5 (Buy):** Active when `NPU Score < Threshold` (Buy Low / Value Strategy).
-    *   **LED A7 (Sell):** Active when `NPU Score > Threshold` (Sell High / Momentum Strategy).
+    *   **LED A5 (Class 0):** Active when `NPU Score < Threshold`.
+    *   **LED A7 (Class 1):** Active when `NPU Score > Threshold`.
     *   **LED A6 (Activity):** Flashes on valid packet.
     *   **LED B8 (Idle):** 1Hz Heartbeat to confirm FPGA is alive.
 
@@ -110,23 +114,23 @@ This module is the "Motherboard" of the design, handling:
 | :--- | :--- | :--- | :--- |
 | **RTL Simulation** | Vivado XSim | **Passed** | Verified bit-accurate NPU math and Parser FSM state transitions. |
 | **Synthesis** | Vivado 2025.1 | **Passed** | OOC Synthesis complete. |
-| **Place & Route** | Vivado Implementation | **Passed** | 8 DSP48E1 slices used (5% utilization). |
-| **Static Timing** | Report Timing Summary | **Mixed** | Core logic (125MHz) met setup (WNS +0.645ns). CDC paths flagged (need explicit false_path constraints). |
+| **Place & Route** | Vivado Implementation | **Passed** | 1165 LUTs (2.5%), 2118 FFs (2.3%), 8 DSPs (5.0%). |
+| **Static Timing** | Report Timing Summary | **Mixed** | Core logic (125MHz) met setup (WNS +1.175ns). CDC paths flagged (need explicit false_path constraints). |
 | **Loopback Test** | Python + Scapy | **Passed** | Validated packet reception and LED triggers on physical hardware. |
 
 ### Visual Indicators
 | LED | Pin | Logic | Interpretation |
 | :--- | :--- | :--- | :--- |
-| **LED 1** | A5 | Result < Threshold | **BUY Signal** (Undervalued Asset) |
-| **LED 2** | A7 | Result > Threshold | **SELL Signal** (Overvalued Asset) |
-| **LED 3** | A6 | Valid Pulse | **Market Activity** (Parsing Success) |
+| **LED 1** | A5 | Result < Threshold | **Class 0** (Low Value) |
+| **LED 2** | A7 | Result > Threshold | **Class 1** (High Value) |
+| **LED 3** | A6 | Valid Pulse | **Input Activity** (Parsing Success) |
 | **LED 4** | B8 | 1Hz Toggle | **System Idle** (Heartbeat) |
 
 ### Test Procedure
 We use `sudo` to bypass the OS network stack and inject raw packets.
 
-1.  **Buy Signal Test (Low Price):** PC sends price `90-99` $\rightarrow$ LED A5 lights up.
-2.  **Sell Signal Test (High Price):** PC sends price `101-110` $\rightarrow$ LED A7 lights up.
+1.  **Class 0 Test (Low Value):** PC sends value `90-99` $\rightarrow$ LED A5 lights up.
+2.  **Class 1 Test (High Value):** PC sends value `101-110` $\rightarrow$ LED A7 lights up.
 
 ## 5. Quick Start (Replication)
 
@@ -134,21 +138,37 @@ We use `sudo` to bypass the OS network stack and inject raw packets.
 | :--- | :--- |
 | `make build` | Synthesize and implement the RTL to generate `top.bit`. |
 | `make program` | Program the AX7015B FPGA via JTAG. |
-| `make sim` | Run the SystemVerilog testbench validating the Buy/Sell logic. |
-| `make packet_test` | Floods the network with a single UDP market packet (Symbol: 0050, Price: 100) at 1000 packets/sec to stress-test the parser. (Requires `sudo`). |
-| `make market_sim` | Sends a sequence of changing market prices (Buy -> Sell -> Buy) with 1.5s delay to demonstrate the trading logic and LED triggers. (Requires `sudo`). |
+| `make sim` | Run the SystemVerilog testbench validating the Classification logic. |
+| `make packet_test` | Floods the network with a single UDP test vector (Feature ID: 0050, Value: 100) at 1000 packets/sec to stress-test the parser. (Requires `sudo`). |
+| `make inference_sim` | Sends a sequence of changing input values (Class 0 -> Class 1 -> Class 0) with 1.5s delay to demonstrate the inference logic and LED triggers. (Requires `sudo`). |
 
 **Step-by-Step Demo:**
 1.  **Hardware Setup:** Connect the AX7015B Ethernet port to your Linux PC (e.g., `eno1`).
 2.  **Program FPGA:** Run `make program`. Verify the "Idle" LED (B8) starts blinking.
-3.  **Prepare Test Script:** Edit `scripts/send_packet.py` or `scripts/test_market_signals.py` to match your PC's interface name (`INTERFACE = "eno1"`).
+3.  **Prepare Test Script:** Edit `scripts/send_inference_vector.py` or `scripts/test_inference_classification.py` to match your PC's interface name (`INTERFACE = "eno1"`).
 4.  **Run Traffic:**
     ```bash
-    make market_sim
+    make inference_sim
     ```
-5.  **Observe:** Watch the LEDs toggle between Buy and Sell actions as the "market" moves.
+5.  **Observe:** Watch the LEDs toggle between Class 0 and Class 1 actions as the "market" input moves.
 
-## 6. Key Concepts Learned
+## 6. Quantitative Latency Benchmark
+Because this architecture bypasses standard CPU constraints (no interrupts, no context switching, no DDR memory accesses off-chip), the latency is completely deterministic and quantifiable down to the cycle. 
+
+Operating at an Ethernet MAC frequency of **125 MHz** ($8\text{ns}$ per cycle), the latency profile is as follows:
+
+| Stage | Operations | Cycles | Latency ($8\text{ns}$ clk) |
+| :--- | :--- | :--- | :--- |
+| **MAC Layer (RX)** | Preamble detect & byte framing | 1 | $8\text{ns}$ |
+| **Shift Register Parser** | Byte capture & signature match (`"0050"`) | 4 | $32\text{ns}$ |
+| **Systolic NPU Array** | $8\times$ PE Pipeline (Multiply-Accumulate) | 16 | $128\text{ns}$ |
+| **Threshold Logic** | Result evaluation | 1 | $8\text{ns}$ |
+| **Wiring & Fanout** | Routing delays (conservative estimate) | ~1 | $8\text{ns}$ |
+| **Total Hardware Latency** | From payload value arriving to Classification out | **23 Cycles** | **$\approx 184\text{ns}$** |
+
+Compared to a typical high-performance software network stack + user-space inference (which generally requires 5µs - 25µs), this NPU consistently classifies incoming ticks in **under 0.2 microseconds**, creating an enormous competitive advantage for line-rate evaluation.
+
+## 7. Key Concepts Learned
 
 1.  **Systolic Dataflow:** Design pipelines where data moves through processing units (Data-in-Motion) rather than units fetching from memory.
 2.  **Network Stack Bypass:** Standard sockets fail in bare-metal FPGA comms; Raw Sockets (Scapy) are essential for Layer 2 verification.

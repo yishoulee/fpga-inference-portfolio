@@ -13,14 +13,14 @@ module top_wrapper (
     output wire       phy_rst_n,
 
     // LEDs
-    output wire       led_buy,
-    output wire       led_sell,
+    output wire       led_class0,
+    output wire       led_class1,
     output wire       led_activity,
     output wire       led_idle
 );
 
-    // Keep PHY out of reset
-    assign phy_rst_n = 1'b1;
+    // Keep PHY out of reset (Controlled by logic below)
+    // assign phy_rst_n = 1'b1;
 
     // --- 1. RGMII to GMII Conversion ---
     wire        gmii_rx_clk;
@@ -30,11 +30,34 @@ module top_wrapper (
 
     // IDELAYCTRL Group for RGMII input delay
     // IDELAYCTRL is required when using IDELAYE2
+    // Must match the group name in rgmii_rx.sv ("rgmii_rx_group")
+    (* IODELAY_GROUP = "rgmii_rx_group" *)
     IDELAYCTRL u_idelayctrl (
         .RDY(),
         .REFCLK(clk_200m), // Need 200MHz ref clock
-        .RST(~sys_rst_n)
+        .RST(~locked)      // Reset when PLL is not locked
     );
+
+    // PHY Reset Logic (Active Low)
+    // Hold Reset for ~10ms (50MHz * 10ms = 500,000 cycles) to ensure PHY wakes up cleanly
+    reg [19:0] phy_rst_cnt = 0;
+    reg        phy_rst_n_int = 0;
+
+    always @(posedge clk_50m) begin
+        if (!locked) begin
+            phy_rst_cnt <= 0;
+            phy_rst_n_int <= 0;
+        end else begin
+            if (phy_rst_cnt < 20'hFFFFF) begin
+                phy_rst_cnt <= phy_rst_cnt + 1;
+                phy_rst_n_int <= 0;
+            end else begin
+                phy_rst_n_int <= 1;
+            end
+        end
+    end
+    
+    assign phy_rst_n = phy_rst_n_int;
 
     rgmii_rx u_rgmii_rx (
         .rst_n(sys_rst_n),
@@ -115,7 +138,12 @@ module top_wrapper (
 
         // AXI-Lite Interface (Driven by VIO)
         .s_axi_aclk(clk_100m),
-        .s_axi_aresetn(locked && sys_rst_n),
+        // Use synchronous reset pattern. 
+        // If s_axi_aclk is dead (unlocked), reset won't clear anyway if using sync reset in logic.
+        // We switched logic to async reset (negedge).
+        // BUT logic relies on clk_100m being active to even register anything.
+        // However, reset should propagate asynchronously.
+        .s_axi_aresetn(sys_rst_n && locked), // Just simple AND. If locked=0, reset=0 (Active). Correct.
         .s_axi_awaddr(vio_awaddr),
         .s_axi_awprot(3'b000),
         .s_axi_awvalid(vio_awvalid),
@@ -137,8 +165,8 @@ module top_wrapper (
         .s_axi_rready(vio_rready),
 
         // LEDs
-        .led_buy(led_buy),
-        .led_sell(led_sell),
+        .led_class0(led_class0),
+        .led_class1(led_class1),
         .led_activity(led_activity),
         .led_idle(led_idle)
     );

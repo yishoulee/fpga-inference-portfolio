@@ -54,7 +54,9 @@ module mac_pe (
         if (!rst_n) begin
             feature_d1  <= 8'd0;
             feature_out <= 8'd0;
-        end else if (valid_in) begin
+        end else begin
+            // ALWAYS shift. If valid_in is low, we expect feature_in to be 0 (from parser).
+            // This ensures the wavefront travels down the chain even after the valid pulse ends.
             feature_d1  <= feature_in;
             feature_out <= feature_d1;
         end

@@ -33,7 +33,7 @@ module rgmii_rx (
         .DELAY_SRC("IDATAIN"),
         .HIGH_PERFORMANCE_MODE("FALSE"),
         .IDELAY_TYPE("FIXED"),
-        .IDELAY_VALUE(28),            // ~1.2ns Delay to center eye (if PHY provides aligned clock)
+        .IDELAY_VALUE(0),            // 0 Delay (Assume PHY adds skew)
         .PIPE_SEL("FALSE"),
         .REFCLK_FREQUENCY(200.0),    
         .SIGNAL_PATTERN("CLOCK")
@@ -67,7 +67,7 @@ module rgmii_rx (
     ) iddr_ctl (
         .Q1(rx_ctl_r),
         .Q2(rx_ctl_f),
-        .C(gmii_rx_clk), // Use rising edge (IDELAY handles phase shift)
+        .C(~gmii_rx_clk), // Invert clock to shift by 180 degrees (capture alignment fix)
         .CE(1'b1),
         .D(rgmii_rx_ctl),
         .R(1'b0),        // Tie to 0, use sync reset via logic if needed
@@ -86,7 +86,7 @@ module rgmii_rx (
             ) iddr_d (
                 .Q1(rxd_r[i]),
                 .Q2(rxd_f[i]),
-                .C(gmii_rx_clk),
+                .C(~gmii_rx_clk),
                 .CE(1'b1),
                 .D(rgmii_rxd[i]),
                 .R(1'b0),

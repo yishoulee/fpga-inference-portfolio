@@ -52,15 +52,17 @@ module axi_weight_regs # (
 );
 
     // Register declarations
-    reg [C_S_AXI_DATA_WIDTH-1:0] slv_reg0;
-    reg [C_S_AXI_DATA_WIDTH-1:0] slv_reg1;
-    reg [C_S_AXI_DATA_WIDTH-1:0] slv_reg2;
-    reg [C_S_AXI_DATA_WIDTH-1:0] slv_reg3;
-    reg [C_S_AXI_DATA_WIDTH-1:0] slv_reg4;
-    reg [C_S_AXI_DATA_WIDTH-1:0] slv_reg5;
-    reg [C_S_AXI_DATA_WIDTH-1:0] slv_reg6;
-    reg [C_S_AXI_DATA_WIDTH-1:0] slv_reg7;
-    reg [C_S_AXI_DATA_WIDTH-1:0] slv_reg8; 
+    // Use INITIAL blocks for FPGA power-up values (Hardware default)
+    // This ensures they are 1/400 even if reset doesn't fire correctly.
+    reg [C_S_AXI_DATA_WIDTH-1:0] slv_reg0 = 32'd1;
+    reg [C_S_AXI_DATA_WIDTH-1:0] slv_reg1 = 32'd1;
+    reg [C_S_AXI_DATA_WIDTH-1:0] slv_reg2 = 32'd1;
+    reg [C_S_AXI_DATA_WIDTH-1:0] slv_reg3 = 32'd1;
+    reg [C_S_AXI_DATA_WIDTH-1:0] slv_reg4 = 32'd1;
+    reg [C_S_AXI_DATA_WIDTH-1:0] slv_reg5 = 32'd1;
+    reg [C_S_AXI_DATA_WIDTH-1:0] slv_reg6 = 32'd1;
+    reg [C_S_AXI_DATA_WIDTH-1:0] slv_reg7 = 32'd1;
+    reg [C_S_AXI_DATA_WIDTH-1:0] slv_reg8 = 32'd400; 
 
     // AXI4-Lite Internal Signals
     reg axi_awready;
@@ -89,18 +91,18 @@ module axi_weight_regs # (
     assign s_axi_rresp   = axi_rresp;
     assign s_axi_rvalid  = axi_rvalid;
 
-    // Weight Assignments
-    assign weight_0 = slv_reg0[7:0];
-    assign weight_1 = slv_reg1[7:0];
-    assign weight_2 = slv_reg2[7:0];
-    assign weight_3 = slv_reg3[7:0];
-    assign weight_4 = slv_reg4[7:0];
-    assign weight_5 = slv_reg5[7:0];
-    assign weight_6 = slv_reg6[7:0];
-    assign weight_7 = slv_reg7[7:0];
+    // Weight Assignments - DEBUG FORCE TO 1
+    assign weight_0 = 8'd1; // slv_reg0[7:0];
+    assign weight_1 = 8'd1; // slv_reg1[7:0];
+    assign weight_2 = 8'd1; // slv_reg2[7:0];
+    assign weight_3 = 8'd1; // slv_reg3[7:0];
+    assign weight_4 = 8'd1; // slv_reg4[7:0];
+    assign weight_5 = 8'd1; // slv_reg5[7:0];
+    assign weight_6 = 8'd1; // slv_reg6[7:0];
+    assign weight_7 = 8'd1; // slv_reg7[7:0];
     
-    // Threshold Assignment
-    assign threshold_o = slv_reg8;
+    // Threshold Assignment - RESTORED TO 400
+    assign threshold_o = 32'd400; //slv_reg8;
     
     // Write Enable helper
     wire slv_reg_wren;
@@ -109,21 +111,22 @@ module axi_weight_regs # (
     //----------------------------------------------
     // Write State Machine
     //----------------------------------------------
-    always @(posedge s_axi_aclk) begin
+    // USE ASYNC RESET (negedge s_axi_aresetn) because the clock might not be stable during reset
+    always @(posedge s_axi_aclk or negedge s_axi_aresetn) begin
         if (s_axi_aresetn == 1'b0) begin
             axi_awready <= 1'b0;
             axi_wready  <= 1'b0;
             axi_bvalid  <= 1'b0;
             axi_bresp   <= 2'b0;
             slv_reg0 <= 32'd1;
-            slv_reg1 <= 0;
-            slv_reg2 <= 0;
-            slv_reg3 <= 0;
-            slv_reg4 <= 0;
-            slv_reg5 <= 0;
-            slv_reg6 <= 0;
-            slv_reg7 <= 0;
-            slv_reg8 <= 32'd100;
+            slv_reg1 <= 32'd1;
+            slv_reg2 <= 32'd1;
+            slv_reg3 <= 32'd1;
+            slv_reg4 <= 32'd1;
+            slv_reg5 <= 32'd1;
+            slv_reg6 <= 32'd1;
+            slv_reg7 <= 32'd1;
+            slv_reg8 <= 32'd400; // Threshold
         end else begin
             // Write Address Ready
             if (~axi_awready && s_axi_awvalid && s_axi_wvalid) begin

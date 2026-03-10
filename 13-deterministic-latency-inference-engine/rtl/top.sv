@@ -35,8 +35,8 @@ module top #(
     input  wire         s_axi_rready,
     
     // LEDs (Active Low)
-    output reg          led_buy,
-    output reg          led_sell,
+    output reg          led_class0,
+    output reg          led_class1,
     output reg          led_activity,
     output reg          led_idle
 );
@@ -49,9 +49,11 @@ module top #(
     wire [7:0]  axis_tdata;
     wire        axis_tvalid, axis_tlast, axis_tuser;
     
-    wire [7:0]  parsed_price;
+    wire [7:0]  parsed_feature;
     wire        parsed_valid;
-    
+    wire        debug_id_match; // New debug signal
+
+    // NPU Output Signals
     wire [31:0] npu_result;
     wire        npu_valid;
 
@@ -78,46 +80,56 @@ module top #(
     udp_parser u_parser (
         .clk(gmii_rx_clk), .rst_n(sys_rst_n),
         .s_axis_tdata(axis_tdata), .s_axis_tvalid(axis_tvalid), .s_axis_tlast(axis_tlast),
-        .target_symbol(32'h30303530), // "0050"
-        .price_out(parsed_price), .price_valid(parsed_valid)
+        .target_feature_id(32'h30303530), // "0050" in ASCII
+        .feature_out(parsed_feature), .feature_valid(parsed_valid),
+        .debug_id_match(debug_id_match)
     );
 
     npu_core u_npu (
         .clk(gmii_rx_clk), .rst_n(sys_rst_n),
         .weight_0(weight_0), .weight_1(weight_1), .weight_2(weight_2), .weight_3(weight_3),
         .weight_4(weight_4), .weight_5(weight_5), .weight_6(weight_6), .weight_7(weight_7),
-        .feature_in(parsed_price), .valid_in(parsed_valid),
+        .feature_in(parsed_feature), .valid_in(parsed_valid),
         .result_out(npu_result), .result_valid(npu_valid)
     );
 
     // --- LED Logic ---
-    reg [27:0] cnt_buy, cnt_sell, cnt_act, cnt_idle;
-    
+    reg [27:0] cnt_class0, cnt_class1, cnt_act, cnt_idle;
+
     always_ff @(posedge gmii_rx_clk or negedge sys_rst_n) begin
         if (!sys_rst_n) begin
-            cnt_buy <= '0; cnt_sell <= '0; cnt_act <= '0; cnt_idle <= '0;
-            led_buy <= 1'b1; led_sell <= 1'b1; led_activity <= 1'b1; led_idle <= 1'b1;
+            cnt_class0 <= '0; cnt_class1 <= '0; cnt_act <= '0; cnt_idle <= '0;
+            led_class0 <= 1'b1; led_class1 <= 1'b1; led_activity <= 1'b1; led_idle <= 1'b1;
         end else begin
             // Heartbeat
             cnt_idle <= (cnt_idle >= LED_PULSE_TICKS) ? 0 : cnt_idle + 1;
             led_idle <= (cnt_idle < (LED_PULSE_TICKS/2)) ? 1'b0 : 1'b1;
 
-            // BUY Logic
-            if (npu_valid && ($signed(npu_result) < $signed(threshold))) begin
-                cnt_buy <= LED_PULSE_TICKS;
-            end else if (cnt_buy > 0) cnt_buy <= cnt_buy - 1;
-            led_buy <= (cnt_buy > 0) ? 1'b0 : 1'b1;
-
-            // SELL Logic
-            if (npu_valid && ($signed(npu_result) > $signed(threshold))) begin
-                cnt_sell <= LED_PULSE_TICKS;
-            end else if (cnt_sell > 0) cnt_sell <= cnt_sell - 1;
-            led_sell <= (cnt_sell > 0) ? 1'b0 : 1'b1;
-
-            // Activity Logic
-            if (npu_valid) cnt_act <= LED_PULSE_TICKS / 4;
-            else if (cnt_act > 0) cnt_act <= cnt_act - 1;
+            // --- APPLICATION MODE FOR LEDS ---
+            
+            // LED 3 (Activity): ANY Valid Result from NPU
+            if (npu_valid) begin
+                cnt_act <= LED_PULSE_TICKS;
+            end else if (cnt_act > 0) begin
+                cnt_act <= cnt_act - 1;
+            end
             led_activity <= (cnt_act > 0) ? 1'b0 : 1'b1;
+
+            // LED 2 (Class 1): High Value (Result > Threshold)
+            if (npu_valid && ($signed(npu_result) > $signed(threshold))) begin
+                cnt_class1 <= LED_PULSE_TICKS;
+            end else if (cnt_class1 > 0) begin
+                cnt_class1 <= cnt_class1 - 1;
+            end
+            led_class1 <= (cnt_class1 > 0) ? 1'b0 : 1'b1;
+
+            // LED 1 (Class 0): Low Value (Result <= Threshold)
+            if (npu_valid && ($signed(npu_result) <= $signed(threshold))) begin
+                cnt_class0 <= LED_PULSE_TICKS;
+            end else if (cnt_class0 > 0) begin
+                cnt_class0 <= cnt_class0 - 1;
+            end
+            led_class0 <= (cnt_class0 > 0) ? 1'b0 : 1'b1;
         end
     end
 endmodule

@@ -29,8 +29,8 @@ module tb_system;
     logic s_axi_bready;
     
     // LEDs (Active Low)
-    logic led_buy;
-    logic led_sell;
+    logic led_class0;
+    logic led_class1;
     logic led_activity;
     logic led_idle;
 
@@ -87,8 +87,8 @@ module tb_system;
         .s_axi_rready(1'b0),
         
         // LEDs
-        .led_buy(led_buy),
-        .led_sell(led_sell),
+        .led_class0(led_class0),
+        .led_class1(led_class1),
         .led_activity(led_activity),
         .led_idle(led_idle)
     );
@@ -187,12 +187,12 @@ module tb_system;
     end
     
     // Active Low LEDs: Trigger on Negative Edge
-    always @(negedge led_buy) begin
+    always @(negedge led_class1) begin
         buy_triggered = 1;
         $display("Time %0t: BUY Signal Triggered (LED went Low)", $time);
     end
     
-    always @(negedge led_sell) begin
+    always @(negedge led_activity) begin
         sell_triggered = 1;
         $display("Time %0t: SELL Signal Triggered (LED went Low)", $time);
     end

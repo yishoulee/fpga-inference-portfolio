@@ -10,13 +10,13 @@ set_property PACKAGE_PIN AB12 [get_ports sys_rst_n]
 set_property IOSTANDARD LVCMOS33 [get_ports sys_rst_n]
 
 # LEDs (Active Low)
-# LED1 (A5) - Buy Signal (High Price)
-set_property PACKAGE_PIN A5 [get_ports led_buy]
-set_property IOSTANDARD LVCMOS33 [get_ports led_buy]
+# LED1 (A5) - Class 0 (Low Value)
+set_property PACKAGE_PIN A5 [get_ports led_class0]
+set_property IOSTANDARD LVCMOS33 [get_ports led_class0]
 
-# LED2 (A7) - Sell Signal (Low Price)
-set_property PACKAGE_PIN A7 [get_ports led_sell]
-set_property IOSTANDARD LVCMOS33 [get_ports led_sell]
+# LED2 (A7) - Class 1 (High Value)
+set_property PACKAGE_PIN A7 [get_ports led_class1]
+set_property IOSTANDARD LVCMOS33 [get_ports led_class1]
 
 # LED3 (A6) - Market Activity (Packet Processed)
 set_property PACKAGE_PIN A6 [get_ports led_activity]
@@ -83,35 +83,9 @@ set_false_path -from [get_cells -hierarchical -filter {NAME =~ *u_axi_regs/slv_r
 set_clock_groups -asynchronous     -group [get_clocks -include_generated_clocks sys_clk]     -group [get_clocks -include_generated_clocks rgmii_rx_clk]
 
 
-# Fix IDELAY timing path 
-# The timing violations are on paths FROM the input pad TO the FF.
-# The violation is Hold time (-6.8ns).
-# This means the data is changing too fast after the clock edge.
-# We delayed the clock by ~1.2ns (IDELAY_VALUE=15). 
-# If we have a massive hold violation, it means the clock is arriving WAY after the data has already become invalid.
-# Or, the analysis is assuming edge-aligned launch and capture.
-
-# Let's relax the hold requirement explicitly for RGMII inputs if we trust the IDELAY.
-
-
-# RGMII Input Constraints - Adjusted for Internal Delay and Direct Capture
-# We are using IDELAY on the CLOCK path (or data path?) to center the window.
-# Previous attempt: IDELAY on DATA, Clock Inverted -> Massive Hold Violation (Clock too late).
-# Current Strategy: IDELAY on DATA (15 taps ~ 1.2ns), Clock NON-Inverted.
-# This should align the capture edge closer to the data eye.
-# If Clock is 0ns, Data is delayed 1.2ns. Capturing at 0ns (Rise) -> Setup Check.
-# Data Valid Window at Pin: -2ns to +2ns (relative to clock edge).
-# Delayed Data Window at FF: -0.8ns to +3.2ns.
-# Capture at 0ns: Setup met (Valid > 0). Hold met (Valid > 0).
-# Let's clean constraints and try strict RGMII-ID style constraints first.
-# Assuming PHY outputs Edge Aligned (Data valid 0ns-4ns? No, usually center aligned or edge aligned).
-# Realtek PHY usually requires IDELAY in MAC (FPGA).
-# If PHY provides Edge Aligned (Transmitter): Data changes at Clock Edge.
-# We hold Data 1.2ns. Data changes at 1.2ns internal.
-# We capture at 0ns. This is safe (Old Data).
-# Wait, capture at 0ns would capturing the Previous data (valid until 1.2ns).
-# So we need set_input_delay reflecting the previous cycle?
-
+# RGMII Input Constraints
+# The IDELAY is applied in the RTL to the RX Clock (approx 1.2ns delay).
+# This centers the capture edge in the Data Eye (assuming Source Synchronous Edge Aligned).
 set_input_delay -clock [get_clocks rgmii_rx_clk] -max 2.0 [get_ports {eth_rxd[*] eth_rx_ctl}]
 set_input_delay -clock [get_clocks rgmii_rx_clk] -min -1.0 [get_ports {eth_rxd[*] eth_rx_ctl}]
 
