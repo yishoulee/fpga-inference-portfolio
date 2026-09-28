@@ -1,61 +1,74 @@
-# Performance Benchmark
+# Performance Evidence
 
-Detailed performance characterization of the FPGA Acceleration Portfolio, verified on **ALINX AX7015B (Zynq-7015)** hardware.
-
----
-
-## 1. Latency (Datapath)
-
-Measured from the ingress of the last byte of the Ethernet Payload (UDP) to the assertion of the Trigger signal.
-
-| Metric | Measurement | Description |
-|:-------|:-----------:|:------------|
-| **Datapath Latency** | **128 ns** | NPU Pipeline (16 cyc @ 125MHz) |
-| **Logic Latency** | **32 ns** | RGMII RX + Parser (4 cyc @ 125MHz) |
-| **GPIO Latency** | **8 ns** | Output Pin Drive (1 cyc @ 125MHz) |
-| **Total Hardware Latency** | **168 ns** | Wire-to-Trigger (Excluding PHY) |
-| **Jitter** | **±0 ns** | Deterministic (Pipeline Architecture) |
-
-*Note: The theoretical minimum for the DSP48E1 chain running at 250 MHz (Turbo Mode) is <100ns. The current integrated build runs safely at 125 MHz for timing closure ease across the entire PL.*
+This document separates **measured hardware results**, **implementation/timing-report results**, and **cycle-derived estimates** for the ALINX AX7015B (Zynq-7015) portfolio.
 
 ---
 
-## 2. Throughput (Control Plane)
+## 1. Integrated Datapath Latency — Cycle-Derived
 
-Measured using `dma_to_device` and `device_to_dma` XDMA distinct tools over PCIe Gen2 x2.
+Project 13's integrated path runs at **125 MHz** (8 ns per cycle). The documented pipeline contains 21 FPGA-logic cycles:
 
-| Direction | Throughput | Theoretical Max | Efficiency |
-|:----------|:----------:|:---------------:|:----------:|
-| **Host to Card (H2C)** | **841 MB/s** | 1000 MB/s | ~84% |
-| **Card to Host (C2H)** | **820 MB/s** | 1000 MB/s | ~82% |
+| Stage | Cycles @ 125 MHz | Derived time |
+| --- | ---: | ---: |
+| RGMII RX + MAC/parser | 4 | 32 ns |
+| NPU pipeline | 16 | 128 ns |
+| GPIO output | 1 | 8 ns |
+| **Total FPGA logic** | **21** | **168 ns** |
 
-*The Gen2 x2 interface provides a theoretical raw bandwidth of 10Gbps (approx 1000 MB/s after encoding overhead). Achieving >800 MB/s indicates highly efficient Scatter-Gather DMA utilization.*
+**Interpretation:** 168 ns is a **cycle-count-derived RTL latency budget**, excluding PHY delay. It is not an independent oscilloscope measurement, and this repository does not claim a measured ±0 ns jitter result.
 
----
-
-## 3. Resource Utilization
-
-Utilization on the **XC7Z015** (Small form-factor Zynq).
-
-| Resource Type | Used | Total Available | % Utilization |
-|:--------------|:----:|:---------------:|:-------------:|
-| **DSP48E1** | 8 | 160 | 5.00% |
-| **Block RAM** | 3.5 | 95 | 3.68% |
-| **LUT (Logic)**| 2,410| 46,200 | 5.21% |
-| **FF (Flip-Flops)**| 4,120| 92,400 | 4.45% |
-
-**Analysis:**
-The design is extremely lightweight. The Systolic NPU architecture scales linearly. We could theoretically fit **~140 NPU stages** (140 DSPs) in this small device before exhausting compute resources, allowing for massive parallel strategy evaluation.
+Project 12 separately exercises a DSP48E1 processing element at **250 MHz**. That isolated result should not be read as the operating frequency of the integrated Project 13 datapath.
 
 ---
 
-## 4. Clocking
+## 2. PCIe XDMA Throughput — Measured
 
-| Domain | Frequency | Usage |
-|:-------|:---------:|:------|
-| `sys_clk` | 100 MHz | System Control / AXI-Lite |
-| `rgmii_rx_clk` | 125 MHz | Network Ingest / Parsing |
-| `dsp_clk` | 250 MHz | NPU Compute (Proposed/Isolated) |
-| `pcie_clk` | 62.5 MHz | XDMA User Logic |
+Measured using the XDMA host transfer tools over PCIe Gen2 x2:
 
-*Constraint File:* `constraints/AX7015B.xdc` verified timing closure with 0.5ns slack worst-case.
+| Direction | Measured throughput |
+| --- | ---: |
+| **Host to Card (H2C)** | **841 MB/s** |
+| **Card to Host (C2H)** | **820 MB/s** |
+
+These are host-side transfer measurements from the Project 11 validation workflow.
+
+---
+
+## 3. Project 13 Implementation Evidence
+
+The Project 13 README records the following Vivado implementation results:
+
+| Metric | Recorded result |
+| --- | ---: |
+| LUTs | **1,165 (2.5%)** |
+| FFs | **2,118 (2.3%)** |
+| DSPs | **8 (5.0%)** |
+| Integrated core clock | **125 MHz** |
+| Core setup timing | **WNS +1.175 ns** |
+
+**Timing caveat:** the Project 13 status is **Mixed**, because CDC paths remained flagged and require explicit constraints. The positive core WNS should therefore not be presented as proof that every path in the complete design was cleanly constrained.
+
+---
+
+## 4. Clock Domains
+
+| Domain / project | Frequency | Evidence scope |
+| --- | ---: | --- |
+| Integrated Project 13 datapath | **125 MHz** | Current integrated design |
+| Project 12 DSP48E1 PE | **250 MHz** | Separate/isolated PE experiment |
+| PCIe XDMA user logic | **62.5 MHz** | Project 11 host interface |
+| System/control clocks | project-specific | See individual build/constraint files |
+
+---
+
+## 5. Claims Deliberately Excluded
+
+This repository does **not** present the following as measured results:
+
+- board power below a specific wattage;
+- an x86-vs-FPGA energy-efficiency multiplier;
+- zero measured timing jitter;
+- a validated 128+ PE implementation on Versal;
+- sub-100 ns latency for the current integrated Project 13 design.
+
+Those may be reasonable subjects for future experiments, but they require dedicated measurement or implementation evidence.
