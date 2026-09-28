@@ -1,110 +1,94 @@
-# FPGA Acceleration Portfolio - System Architecture
+# FPGA Acceleration Portfolio — System Architecture
 
-**Status:** HARDWARE VERIFIED - Zynq-7000 (XC7Z015)
-**Scale:** 13 Integrated Projects
-**Key Metrics:** Sub-100ns Trigger Latency | 841 MB/s DMA Throughput | 250 MHz Compute
+**Platform:** ALINX AX7015B / Zynq-7000 XC7Z015
+**Scale:** 13 progressive projects
+**Evidence highlights:** 841 MB/s H2C and 820 MB/s C2H measured XDMA throughput; integrated Project 13 at 125 MHz; 168 ns cycle-derived FPGA-logic latency budget.
 
 ---
 
 ## 1. System Overview
 
-This portfolio implements a **heterogeneous acceleration architecture** optimized for ultra-low latency network processing and deterministic signal generation. The system bypasses traditional OS networking stacks by implementing the entire Layer 2-4 datapath directly in programmable logic (PL), while retaining a high-throughput PCIe control plane for software interaction.
-
-### High-Level Block Diagram
+The portfolio combines a programmable-logic data path with a PCIe/Linux control path. The integrated Project 13 design receives RGMII traffic, parses a target pattern, passes data through an 8-stage compute pipeline, and produces a trigger output. Separate projects develop and validate the supporting Ethernet, PCIe, AXI/BRAM, CDC, and compute components.
 
 ```mermaid
 graph TD
-    subgraph "External Network"
-        ETH[Gigabit Ethernet] -->|RGMII| PHY[Realtek PHY]
-    end
-
-    subgraph "Zynq PL (FPGA Fabric)"
-        PHY -->|DDR| MAC[Custom RGMII MAC]
-        MAC -->|AXI-Stream| PARSER[Cut-Through Parser]
-        PARSER -->|Feature Vector| NPU[Systolic NPU]
-        NPU -->|Trigger| GPIO[Output Pins]
-        
-        Host[PCIe Host] <-->|Gen2 x2| XDMA[XDMA Core]
-        XDMA <-->|AXI4-Lite| CSR[Control Registers]
-        CSR -->|Weights/Config| NPU
-    end
-
-    subgraph "Control Plane"
-        Host -->|Driver| SW[Trading Strategy]
-    end
-    
-    style NPU fill:#f9f,stroke:#333,stroke-width:2px
-    style MAC fill:#ccf,stroke:#333
+    ETH[Gigabit Ethernet] -->|RGMII| PHY[Ethernet PHY]
+    PHY --> RX[RGMII RX]
+    RX --> PARSER[Streaming Parser]
+    PARSER --> NPU[8-stage Compute Pipeline]
+    NPU --> GPIO[Trigger / GPIO]
+    HOST[Linux Host] <-->|PCIe Gen2 x2 / XDMA| CTRL[DMA + Control]
+    CTRL --> NPU
 ```
 
 ---
 
-## 2. Architecture Layers
+## 2. Data Plane
 
-### Layer 1: The Data Plane (Nanosecond Domain)
-**Goal:** Deterministic packet-to-trigger capability.
+### RGMII receive path
 
-*   **Ingest (Project 09):** Custom RGMII Receiver.
-    *   Implementing `IDDR` primitives for Double Data Rate deserialization.
-    *   **Phase Alignment:** Inverted RX clock (`~rgmii_rxc`) to shift capture window 180° (4ns), plus `IDELAYE2` (Tap 0) for fine-tuning.
-    *   Zero-copy handover to the FPGA fabric.
-    
-*   **Parsing (Project 13):** "0050" Signature Scanner.
-    *   **Architecture:** 32-bit Continuous Shift Register. Scans for unique ID pattern `{ID[23:0], data} == TARGET` instead of fixed byte offsets.
-    *   **Latency:** 1 cycle. The parsing decision is valid on the *next clock cycle* after the target value byte arrives.
-    
-*   **Compute (Project 13):** 1D Systolic Array.
-    *   **Structure:** 8-stage MAC (Multiply-Accumulate) pipeline.
-    *   **Optimization:** Mixed approach. Project 12 verified manual `DSP48E1` instantiation for max frequency. Project 13 uses **inference** for portability and easier integration.
-    *   **Timing:** 125 MHz (Current Integrated) / 250 MHz (Design Capable).
-    *   **Throughput:** 1 result per clock cycle per PE.
+- Uses FPGA DDR input primitives for receive-path capture.
+- Hardware bring-up used Vivado ILA and packet injection to diagnose alignment/frame-start problems.
+- Stable 1 Gbps receive operation was demonstrated in the Project 09 workflow.
 
-### Layer 2: The Control Plane (Throughput Domain)
-**Goal:** High-bandwidth configuration and monitoring.
+### Parser
 
-*   **Interconnect (Project 11):** PCIe Gen2 x2.
-    *   **IP:** Xilinx DMA (XDMA) in Scatter-Gather mode.
-    *   **Driver:** Custom-patched `xdma.ko` for Linux Kernel 5.x/6.x support.
-    *   **Performance:** 841 MB/s Read/Write bandwidth to DDR3.
+- Streaming target-pattern detection.
+- The parsing decision is registered in the packet-processing pipeline.
 
-*   **Memory Management (Project 08):**
-    *   Dual-port Block RAM (BRAM) controller implementing an AXI4-Lite bridge.
-    *   Guaranteed 2-cycle read latency for register access.
+### Compute
 
-### Layer 3: Reliability & Clocking
-**Goal:** Domain crossing safety.
-
-*   **CDC (Project 03):** 
-    *   Gray-code pointers for multi-bit bus crossing.
-    *   2-stage Flip-Flop synchronizers for single-bit control signals.
-*   **Arbitration (Project 06):**
-    *   Round-Robin Arbiter using Two's Complement masking (`request & -request`) for O(1) grant logic.
+- Project 13 uses an 8-stage integrated compute path at **125 MHz**.
+- Project 12 separately experiments with a DSP48E1 processing element at **250 MHz**.
+- The 250 MHz Project 12 result is not treated as the integrated Project 13 clock rate.
 
 ---
 
-## 3. Technology Stack
+## 3. Control Plane
 
-| Component | Technology | implementation |
-|-----------|------------|----------------|
-| **FPGA** | Xilinx Zynq-7000 | XC7Z015-2CLG485 |
-| **Synthesis** | Vivado 2025.x | SystemVerilog / TCL |
-| **Compute** | DSP48E1 | Manual Primitive Instantiation |
-| **Network** | RGMII | IDDR / OSERDES |
-| **Host** | PCIe Gen2x2 | XDMA / Linux Kernel Support |
-| **Verification**| Python | Scapy / Cocotb / VIO |
+### PCIe XDMA
+
+- PCIe Gen2 x2 using Xilinx XDMA.
+- Linux host integration with the XDMA driver and transfer utilities.
+- Recorded measurements: **841 MB/s H2C** and **820 MB/s C2H**.
+
+### AXI / BRAM
+
+- AXI/AXI-Lite control and register-access experiments.
+- BRAM-backed paths used for configuration and latency studies.
 
 ---
 
-## 4. Latency Budget (Estimated)
+## 4. Clock-Domain and Reliability Work
 
-| Stage | Cycles @ 125MHz | Time (ns) | Notes |
-|-------|-----------------|-----------|-------|
-| **PHY Delay** | - | ~280 | Fixed RTL8211 Delay |
-| **RGMII RX** | 1 | 8 | IDDR Registration |
-| **MAC RX** | 2 | 16 | Pipeline + State Machine |
-| **Parser** | 1 | 8 | Symbol Match Reg |
-| **NPU Pipeline**| 16 | 128 | 8 Stages x 2 Cycles |
-| **GPIO Out** | 1 | 8 | Pin Drive |
-| **Total RTL** | **21** | **168** | **FPGA Logic Only** |
+- Multi-clock-domain experiments include two-flop synchronizers and Gray-code techniques.
+- Project 13's recorded timing result shows the 125 MHz core meeting setup with **WNS +1.175 ns**, while CDC paths remained flagged and require explicit constraints.
+- Because of that open CDC-constraint work, the integrated design is described as **hardware tested with mixed timing status**, not as globally timing-clean.
 
-*Note on NPU: In 'Turbo Mode' (250MHz DSP), pipeline latency reduces to 64ns.*
+---
+
+## 5. Integrated Latency Budget
+
+The following is a **cycle-derived FPGA-logic budget**, not an independent time-domain measurement:
+
+| Stage | Cycles @ 125 MHz | Time |
+| --- | ---: | ---: |
+| RGMII RX + MAC/parser | 4 | 32 ns |
+| NPU pipeline | 16 | 128 ns |
+| GPIO output | 1 | 8 ns |
+| **Total FPGA logic** | **21** | **168 ns** |
+
+PHY delay is excluded. No zero-jitter hardware measurement is claimed.
+
+---
+
+## 6. Verification
+
+- Vivado XSim and self-checking SystemVerilog testbenches
+- Tcl/Make build automation
+- Vivado timing and utilization reports
+- ILA/VIO hardware debugging
+- Python and Scapy packet generation
+- Linux XDMA transfer testing
+
+See the individual project directories for project-specific scripts, reports, and validation notes.
