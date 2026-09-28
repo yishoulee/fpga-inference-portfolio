@@ -1,74 +1,67 @@
-# Performance Evidence
+# Performance and Validation Evidence
 
-This document separates **measured hardware results**, **implementation/timing-report results**, and **cycle-derived estimates** for the ALINX AX7015B (Zynq-7015) portfolio.
+This document separates **recorded host-side benchmarks**, **implementation/timing notes**, and **cycle-derived RTL quantities** for the ALINX AX7015B (Zynq-7015) portfolio.
 
----
+## 1. RGMII Receive Path
 
-## 1. Integrated Datapath Latency — Cycle-Derived
+Project 09 validates physical frame reception on the custom RGMII path using host packet injection and Vivado ILA.
 
-Project 13's integrated path runs at **125 MHz** (8 ns per cycle). The documented pipeline contains 21 FPGA-logic cycles:
+The interface uses a 125 MHz, 4-bit, double-data-rate receive bus, corresponding to the standard Gigabit Ethernet line rate. This repository does **not** contain a sustained application-throughput benchmark or a formal BER/packet-loss test.
 
-| Stage | Cycles @ 125 MHz | Derived time |
-| --- | ---: | ---: |
-| RGMII RX + MAC/parser | 4 | 32 ns |
-| NPU pipeline | 16 | 128 ns |
-| GPIO output | 1 | 8 ns |
-| **Total FPGA logic** | **21** | **168 ns** |
+## 2. PCIe XDMA Host-Side Benchmark
 
-**Interpretation:** 168 ns is a **cycle-count-derived RTL latency budget**, excluding PHY delay. It is not an independent oscilloscope measurement, and this repository does not claim a measured ±0 ns jitter result.
+Project 11 includes a Python benchmark that writes and reads buffers through the XDMA character devices and verifies returned data.
 
-Project 12 separately exercises a DSP48E1 processing element at **250 MHz**. That isolated result should not be read as the operating frequency of the integrated Project 13 datapath.
+The project notes record:
 
----
-
-## 2. PCIe XDMA Throughput — Measured
-
-Measured using the XDMA host transfer tools over PCIe Gen2 x2:
-
-| Direction | Measured throughput |
+| Direction | Recorded project result |
 | --- | ---: |
 | **Host to Card (H2C)** | **841 MB/s** |
-| **Card to Host (C2H)** | **820 MB/s** |
+| **Card to Host (C2H)** | **>590 MB/s** |
 
-These are host-side transfer measurements from the Project 11 validation workflow.
+The benchmark script is source-controlled, but the original raw terminal output is not stored as a separate artifact. These values should therefore be read as **recorded project results**, not independently archived lab measurements.
 
----
+The path is not described as end-to-end zero-copy; the benchmark uses ordinary file `write()` and `read()` operations on `/dev/xdma*`.
 
-## 3. Project 13 Implementation Evidence
+## 3. Project 13 Implementation Notes
 
-The Project 13 README records the following Vivado implementation results:
+The Project 13 README records:
 
 | Metric | Recorded result |
 | --- | ---: |
 | LUTs | **1,165 (2.5%)** |
 | FFs | **2,118 (2.3%)** |
 | DSPs | **8 (5.0%)** |
-| Integrated core clock | **125 MHz** |
-| Core setup timing | **WNS +1.175 ns** |
+| Integrated datapath clock | **125 MHz** |
+| Core setup result | **WNS +1.175 ns** |
 
-**Timing caveat:** the Project 13 status is **Mixed**, because CDC paths remained flagged and require explicit constraints. The positive core WNS should therefore not be presented as proof that every path in the complete design was cleanly constrained.
+**Timing caveat:** the overall timing status is **Mixed** because CDC paths remained flagged and require explicit constraints.
 
----
+## 4. Cycle-Derived Compute-Pipeline Quantity
 
-## 4. Clock Domains
+The NPU RTL delays `result_valid` through a **16-cycle pipeline**.
 
-| Domain / project | Frequency | Evidence scope |
-| --- | ---: | --- |
-| Integrated Project 13 datapath | **125 MHz** | Current integrated design |
-| Project 12 DSP48E1 PE | **250 MHz** | Separate/isolated PE experiment |
-| PCIe XDMA user logic | **62.5 MHz** | Project 11 host interface |
-| System/control clocks | project-specific | See individual build/constraint files |
+At 125 MHz:
 
----
+`16 cycles × 8 ns/cycle = 128 ns`
 
-## 5. Claims Deliberately Excluded
+This is an internal **cycle-derived quantity**, not a measured end-to-end packet-to-output latency.
 
-This repository does **not** present the following as measured results:
+Earlier documentation contained conflicting complete-path totals of 168 ns and 184 ns. Those are no longer presented as portfolio benchmarks.
 
+## 5. Separate 250 MHz Experiment
+
+Project 12 separately exercises a DSP48E1 processing element at **250 MHz**. That result belongs to the isolated PE experiment and should not be read as the integrated Project 13 clock rate.
+
+## 6. Claims Excluded
+
+This repository does not present the following as measured results:
+
+- zero BER or zero packet loss;
+- certified sustained 1 Gbit/s application throughput;
+- an 820 MB/s C2H benchmark;
 - board power below a specific wattage;
-- an x86-vs-FPGA energy-efficiency multiplier;
+- an FPGA-vs-CPU energy-efficiency multiplier;
 - zero measured timing jitter;
-- a validated 128+ PE implementation on Versal;
-- sub-100 ns latency for the current integrated Project 13 design.
-
-Those may be reasonable subjects for future experiments, but they require dedicated measurement or implementation evidence.
+- a validated 128+ PE implementation;
+- a verified end-to-end nanosecond latency for Project 13.
