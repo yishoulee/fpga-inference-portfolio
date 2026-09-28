@@ -1,180 +1,107 @@
-# Wire-Speed Inference Subsystem
-*PCIe Gen2/5, RGMII Ingest, & Systolic Compute.*
+# Zynq-7000 Hardware/Software Integration & Validation Portfolio
+*RGMII ingest, FPGA datapaths, PCIe XDMA, Linux integration, and repeatable validation on real hardware.*
 
 ![FPGA](https://img.shields.io/badge/SoC-Zynq--7000%20(XC7Z015)-blue)
-![Architecture](https://img.shields.io/badge/Architecture-Systolic%20Array-purple)
 ![Interface](https://img.shields.io/badge/Interface-PCIe%20Gen2x2-gold)
-![Latency](https://img.shields.io/badge/Wire--to--Trigger-168ns-orange)
-![Throughput](https://img.shields.io/badge/DMA-841%20MB%2Fs-success)
-![Status](https://img.shields.io/badge/Silicon-Verified-brightgreen)
+![DMA](https://img.shields.io/badge/Measured%20H2C-841%20MB%2Fs-success)
+![Clock](https://img.shields.io/badge/Integrated%20Datapath-125%20MHz-informational)
+![Status](https://img.shields.io/badge/Hardware-Tested-brightgreen)
 
-## Heterogeneous SoC Accelerator Framework
+## Overview
 
-This repository documents the architectural development of a **high-performance inference subsystem** on the Xilinx Zynq-7000 (28nm) platform. It demonstrates a complete hardware-software co-design approach, moving from bare-metal RTL primitives to a fully integrated PCIe-attached accelerator.
+This repository documents 13 progressive FPGA and hardware/software integration projects on an **ALINX AX7015B (Zynq-7015)**. The work covers SystemVerilog RTL, Vivado/Tcl build automation, RGMII Ethernet receive-path debugging, PCIe XDMA, Linux driver integration, AXI/BRAM control paths, and hardware-in-the-loop validation.
 
-While the 28nm node is mature, this project addresses the rigorous **low-level engineering challenges** required for high-speed I/O and deterministic timing closure:
-- **Source-Synchronous Clocking:** Manual IDELAY/IDDR instantiation for RGMII interfaces.
-- **250MHz Timing Closure:** Hand-placed DSP48E1 pipelining to maximize Fmax.
-- **System Integration:** Custom Linux kernel driver patching for non-standard PCIe topologies.
+The emphasis is on **reproducible engineering evidence**: build scripts, timing/utilization reports, test scripts, ILA/VIO debugging, and measured host↔card throughput.
 
-**Target Audience:** ASIC/FPGA Research & Development, Heterogeneous Computing, High-Performance Networking.
+## Evidence Summary
 
----
+### Measured on hardware
 
-## Performance Benchmarks
+- **Gigabit Ethernet:** stable 1 Gbps RGMII receive path validated with packet injection and Vivado ILA.
+- **PCIe Gen2 x2 XDMA:** **841 MB/s host-to-card** and **820 MB/s card-to-host** using the XDMA transfer tools.
+- **Integrated loopback:** Project 13 received injected packets and asserted the expected LED/trigger behavior on the AX7015B.
 
-Verified on **ALINX AX7015B (Zynq-7015)** hardware.
+### Implementation and timing-report evidence
 
-### 1. Latency Budget (Wire-to-Trigger)
-Deterministic hardware datapath measured from Ethernet ingress to GPIO assertion.
+- **Project 13 integrated datapath:** runs at **125 MHz**.
+- **Place & route:** **1,165 LUTs (2.5%)**, **2,118 FFs (2.3%)**, and **8 DSPs (5.0%)**.
+- **Core timing:** 125 MHz setup timing met with **WNS +1.175 ns** in the recorded Project 13 result.
+- **Important limitation:** Project 13's timing status is recorded as **Mixed** because CDC paths were still flagged and require explicit constraints.
+- **Project 12:** separately exercises a DSP48E1 processing element at **250 MHz**. This is an isolated project result, not the clock rate of the integrated Project 13 datapath.
 
-| Stage | Latency | Description |
-|:-------|:-----------:|:------------|
-| **Logic Latency** | **32 ns** | RGMII RX + Cut-Through Parser (4 cyc @ 125MHz) |
-| **Compute Latency** | **128 ns** | 8-Stage Systolic NPU Pipeline (16 cyc @ 125MHz) |
-| **Output Stage** | **8 ns** | GPIO Pin Drive (1 cyc @ 125MHz) |
-| **Total Hardware Latency** | **168 ns** | **Ethernet Payload $\rightarrow$ Trigger Output** |
-| **Jitter** | **±0 ns** | Fully Deterministic Pipeline |
+### Cycle-derived latency
 
-### 2. Efficiency & Power Analysis
-**Low-Power Edge Compute:**
-*   **Power Envelope:** < 5W Total Board Power (TBP).
-*   **Efficiency:** Achieved 168ns deterministic response within a passive thermal footprint, demonstrating a **50x efficiency gain** over equivalent x86-based kernel-bypass solutions (which require 200W+ servers).
+The integrated RTL path contains **21 pipeline cycles at 125 MHz**, giving a **168 ns FPGA-logic latency budget** from the documented stage count:
 
-### 3. Resource Optimization (Scalability)
-**Linear Scalability Architecture:**
-*   **Utilization:** Current implementation uses only **5% of DSP48E1** resources on the XC7Z015.
-*   **Architectural Intent:** The 1D Systolic Array is designed for linear scalability. While the current implementation uses 8 PEs for the AX7015B, the architecture is parameterized to scale to **128+ PEs** for high-end Versal targets (VD100/VC1902) without logic redesign.
+| Stage | Cycles | Derived time |
+| --- | ---: | ---: |
+| RGMII RX + MAC/parser | 4 | 32 ns |
+| NPU pipeline | 16 | 128 ns |
+| GPIO output stage | 1 | 8 ns |
+| **Total FPGA logic** | **21** | **168 ns** |
 
-### 4. Host-to-Card Throughput (PCIe Gen2 x2)
-Sustained DMA performance using custom Scatter-Gather XDMA implementation.
+This **168 ns figure is derived from the RTL cycle count**. It excludes PHY delay and is not presented as an independent oscilloscope measurement. No zero-jitter hardware measurement is claimed.
 
-| Direction | Throughput | Standards Compliance |
-|:----------|:----------:|:---------------:|
-| **Host to Card (H2C)** | **841 MB/s** | ~84% of Theoretical GC2x2 Max |
-| **Card to Host (C2H)** | **820 MB/s** | ~82% of Theoretical GC2x2 Max |
+### Not benchmarked here
+
+Power-efficiency comparisons against x86 systems, large-array scaling to future FPGA families, and other platform projections are **not measured results in this repository** and are therefore not presented as performance claims.
 
 ---
 
-## Technical Profile
+## System Integration
 
-**SoC Architecture**
-- Implementation of high-throughput PCIe and Gigabit Ethernet data planes on Zynq-7000.
-- Heterogeneous system design balancing PL (Programmable Logic) acceleration with PS (Processing System) flexibility.
-
-**RTL Optimization (ASIC-Style)**
-- **Manual Primitive Instantiation:** Direct use of `DSP48E1`, `IDDR`, `ISERDES` to bypass synthesis inefficiencies.
-- **Timing Closure:** Pipelining strategies to achieve 250MHz+ operation on -2 speed grade 28nm silicon.
-- **Resource Efficiency:** Full NPU implementation uses **<6%** of XC7Z015 resources, leaving massive headroom for system scaling.
-
-**System-Level Integration**
-- **Linux Kernel Development:** Custom `xdma.ko` driver patching for device ID `0x7015`.
-- **Reliability Engineering:** CDC (Clock Domain Crossing) verification using Gray-code pointers and ASYNC_REG synchronizers.
-- **Verification:** Script-driven Tcl workflows and hardware-in-the-loop (HIL) validation.
-
----
-
-## Hardware Platform: Cost-Effective R&D
-**Platform:** ALINX AX7015B (Zynq-7000 XC7Z015-2CLG485)
-**Role:** 28nm prototyping vehicle for validating high-speed IP before ASIC migration.
-
-| Feature | Specification | Usage in Project |
-|:---|:---|:---|
-| **Fabric** | Artix-7 equivalent (74K LC, 160 DSP) | Custom RTL Datapaths |
-| **PS Cores** | Dual ARM Cortex-A9 @ 767 MHz | Control Plane & Telemetry |
-| **Connectivity** | PCIe Gen2 x2, Gigabit RGMII | High-bandwidth Host/Network Link |
-
----
-
-## Project Portfolio: The "Industrious" Workflow
-
-This repository is organized as a progressive engineering curriculum, demonstrating **reusable IP design** and **industrial-grade verification**.
-
-### Capstone: Wire-Speed Inference Subsystem (Project 13)
-*Formerly "Low-Latency Trading NPU"*
-
-**A fully integrated SoC accelerator for real-time feature extraction and signal generation.**
-
-- **Core Logic:** **Scalable Tensor Processing Unit (TPU)** optimized for streaming dot-product operations.
-- **Datapath:** **Raw Ethernet Hardware Transceiver (No-Vendor-IP)** with **Real-time Packet Inspection (DPI)** logic.
-- **Host Link:** PCIe Gen2x2 XDMA Bridge delivering >800 MB/s to the host CPU.
-- **Verification:**
-    - **Simulation:** Constrained-random UVM-style SystemVerilog testbenches.
-    - **Silicon:** ChipScope/ILA validation with Python-based packet injection using `scapy` (Layer 2 bypass).
+- **Network ingest:** custom RGMII receive path using FPGA DDR input primitives and hardware debugging.
+- **Packet processing:** streaming parser feeding an 8-stage systolic compute path.
+- **Host link:** PCIe Gen2 x2 through Xilinx XDMA.
+- **Control:** AXI/AXI-Lite and BRAM-based configuration paths.
+- **Linux:** XDMA driver integration and host-side transfer/testing scripts.
+- **Verification:** Vivado XSim, self-checking testbenches, Tcl builds, ILA/VIO, Python and Scapy.
 
 ```mermaid
 graph LR
-    PHY[Ethernet PHY] -->|RGMII| MAC[Custom MAC]
-    MAC -->|AXI-Stream| Parser[UDP Parser]
-    Parser -->|Feature| NPU[Systolic Array]
-    NPU -->|Trigger| GPIO[Output Pin]
-    PCIe[PCIe Gen2x2] <-->|DMA| Regs[Control Registers]
-    Regs -->|Weights| NPU
-    style NPU fill:#f9f,stroke:#333
-    style MAC fill:#ccf,stroke:#333
+    PHY[Ethernet PHY] -->|RGMII| RX[RGMII RX]
+    RX --> PARSER[Streaming Parser]
+    PARSER --> NPU[Systolic Datapath]
+    NPU --> GPIO[Trigger / GPIO]
+    PCIe[PCIe Gen2 x2] <-->|XDMA| CTRL[Control / DMA]
+    CTRL --> NPU
 ```
 
-**PCIe Memory Map & Host Interface:**
+## Project Map
 
-```mermaid
-classDiagram
-    class Host_CPU {
-        +User Space App
-        +Kernel Driver (xdma.ko)
-    }
-    class FPGA_BAR0_CSR {
-        +Register: Control (Start/Stop)
-        +Register: Status (Heartbeat)
-        +Register: Interrupt_Mask
-    }
-    class FPGA_BAR1_Weights {
-        +Array: NPU_Weights[128]
-        +Value: Threshold_Cutoff
-    }
-    class FPGA_Interrupts {
-        +IRQ_0: Packet_Processed
-        +IRQ_1: DMA_Complete
-    }
-    
-    Host_CPU --> FPGA_BAR0_CSR : AXI-Lite (Config)
-    Host_CPU --> FPGA_BAR1_Weights : AXI-Lite (Parameters)
-    Host_CPU ..> FPGA_Interrupts : MSI-X Notification
-```
+### Data path and compute
 
-### Core IP Modules
+- **Project 13 — Deterministic-Latency Inference Engine:** integrated network → parser → compute → trigger path.
+- **Project 12 — Systolic Processing Element:** DSP48E1-based MAC experimentation, including the separate 250 MHz test.
+- **Project 10 — Market/Data Parser:** streaming signature detection and packet-processing logic.
+- **Project 09 — Gigabit Ethernet RX:** RGMII receive-path bring-up and phase/alignment debugging.
 
-**Precision Datapath**
-- **Project 12: Systolic Processing Element** - Atomic DSP48E1 MAC unit manually pipelined/retimed for 250 MHz.
-- **Project 10: Wire-Speed Parser** - Zero-cycle latency "0050" pattern matcher using parallel masking.
-- **Project 09: RGMII RX Interface** - Source-synchronous DDR deserializer with dynamic phase alignment.
+### System infrastructure
 
-**System Infrastructure**
-- **Project 11: PCIe XDMA Engine** - DMA subsystem with scatter-gather support.
-- **Project 06: QoS Arbiter** - Round-robin arbitration logic with single-cycle grant.
-- **Project 03: CDC Safe-Guards** - Multi-bit clock domain crossing using Gray codes.
+- **Project 11 — PCIe XDMA Engine:** host↔card DMA and Linux integration.
+- **Project 08 — BRAM Controller Latency Study:** AXI/BRAM register-access path.
+- **Project 06 — QoS Arbiter:** round-robin arbitration logic.
+- **Project 03 — CDC:** synchronization and multi-clock-domain experiments.
 
----
+## Reproducibility
 
-## Engineering Rigor
+Projects use source-controlled RTL and Tcl/Make-based workflows so builds can be recreated without relying on checked-in Vivado project state. Where applicable, the repository includes timing/utilization reports, hardware test scripts, and debug-probe workflows.
 
-To ensure reproducibility and reliability, this repository follows strict design practices:
+## Hardware Debugging Examples
 
-1.  **Tcl-Driven Workflow:** All projects use `build.tcl` to recreate Vivado projects from source, ensuring version control cleanliness.
-2.  **Reset Safety:** Asynchronous assertion, synchronous de-assertion reset bridges for all clock domains.
-3.  **Gold-Standard Verification:** Self-checking testbenches for every module, from simple counters to complex AXI4-Stream handshakes.
+- **RGMII alignment:** used Vivado ILA to trace corrupted frame-start behavior and recover stable receive operation.
+- **Project 13 control path:** traced zero NPU output to uninitialized control registers and used VIO to inject weights/thresholds for hardware validation.
+- **PCIe benchmark:** traced an apparent ~150 MB/s bottleneck to the Python timing method; correcting the benchmark produced the recorded **841 MB/s** H2C result.
+- **Host networking:** used raw Scapy Layer-2 injection to bypass host ARP behavior during packet testing.
 
-**Cloning the Repository:**
+## Hardware
+
+- **Board:** ALINX AX7015B
+- **Device:** Xilinx Zynq-7000 XC7Z015-2CLG485
+- **Connectivity used:** Gigabit RGMII, PCIe Gen2 x2, DDR3, JTAG
+
+## Clone
 
 ```bash
 git clone https://github.com/yishoulee/fpga-inference-portfolio.git
 ```
-
-
-## Hardware Debugging Spotlight
-
-Real-world engineering involves solving problems that simulations miss.
-
-* **The "Ghost" Weights (Project 13):** Diagnosed NPU output failures on silicon. Root cause: uninitialized AXI registers. **Fix:** Simulated control plane via VIO core injection.
-* **Clock Phase Alignment (Project 09):** Debugged RGMII setup violations. **Fix:** Architectural inversion of RX clock to achieve perfect 180° phase shift.
-* **The ARP Black Hole (Project 11):** Investigated packet drops from Linux host. **Fix:** Bypassed OS ARP cache using raw `scapy` socket injection.
-
